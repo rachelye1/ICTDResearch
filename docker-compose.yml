@@ -1,0 +1,85 @@
+# Launches a minimum development network with a single default validator
+#
+# TODO(matt9j) Formalize keyhandling
+
+version: "3"
+
+services:
+
+  settings-tp:
+    image: hyperledger/sawtooth-settings-tp:1.0
+    container_name: sawtooth-settings-tp
+    depends_on:
+      - validator
+    entrypoint: settings-tp -vv -C tcp://validator:4004
+
+  identity-tp:
+    image: hyperledger/sawtooth-identity-tp:1.0
+    container_name: sawtooth-identity-tp
+    depends_on:
+      - validator
+    entrypoint: identity-tp -vv -C tcp://validator:4004
+
+  crdt-tp:
+    build:
+      context: ./
+      dockerfile: crdt-tp-python/Dockerfile
+    #image: matt9j/crdt-tp-python:staging
+    container_name: crdt-tp-python
+    depends_on:
+      - validator
+    entrypoint: python3 crdt-tp-python/processor/main.py -C tcp://validator:4004
+
+  validator:
+    image: hyperledger/sawtooth-validator:1.0
+    container_name: sawtooth-validator
+    expose:
+      - 4004
+    ports:
+      - "4004:4004"
+    # start the validator with an empty genesis batch
+    entrypoint: "bash -c \"\
+      if sawadm keygen ; then \
+        sawtooth keygen my_key && \
+        sawset genesis -k /root/.sawtooth/keys/my_key.priv && \
+        sawadm genesis config-genesis.batch ; \
+      fi ; \
+      sawtooth-validator -vv \
+        --endpoint tcp://validator:8800 \
+        --bind component:tcp://eth0:4004 \
+        --bind network:tcp://eth0:8800 \
+      \""
+
+  rest-api:
+    image: hyperledger/sawtooth-rest-api:1.0
+    container_name: sawtooth-rest-api
+    ports:
+      - "8008:8008"
+    depends_on:
+      - validator
+    entrypoint: sawtooth-rest-api -C tcp://validator:4004 --bind rest-api:8008
+
+  ccn-server:
+    build:
+      context: ./
+      dockerfile: ccn-server/Dockerfile
+    container_name: ccn-server
+    depends_on:
+      - rest-api
+    ports:
+      - "5000:5000"
+    working_dir: /ccn-server
+    entrypoint: "bash -c \"\
+      sawtooth keygen ; \
+      pipenv run python server/main.py ; \
+      \""
+
+  shell:
+    image: hyperledger/sawtooth-all:1.0
+    container_name: sawtooth-shell
+    depends_on:
+      - rest-api
+    entrypoint: "bash -c \"\
+      sawtooth keygen ; \
+      tail -f /dev/null \
+      \""
